@@ -20,22 +20,25 @@ def visualize_latent_hierarchy(model, data_loader, device='cuda'):
     model.eval()
     z_high_list = []
     z_low_list = []
+    density_list = []
     genres = []
 
     with torch.no_grad():
-        for patterns, genre_labels, _ in data_loader:
+        for patterns, styles, density in data_loader:
             patterns = patterns.to(device)
-            mu_low, logvar_low, mu_high, logvar_high, _ = model.encode_hierarchy(patterns)
+            mu_low, logvar_low, mu_high, logvar_high = model.encode_hierarchy(patterns)
             z_high_list.append(mu_high.cpu())
             z_low_list.append(mu_low.cpu())
-            genres.extend(genre_labels.numpy())
+            density_list.append(density.cpu())
+            genres.extend(styles.numpy())
 
     z_high_all = torch.cat(z_high_list).numpy()
     z_low_all = torch.cat(z_low_list).numpy()
+    density_all = torch.cat(density_list).numpy()
     genres = np.array(genres)
 
     # t-SNE on z_high
-    z_high_2d = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(z_high_all)
+    z_high_2d = TSNE(n_components=2, perplexity=10, random_state=42).fit_transform(z_high_all)
 
     plt.figure(figsize=(8, 6))
     scatter = plt.scatter(z_high_2d[:, 0], z_high_2d[:, 1], c=genres, cmap='tab10', alpha=0.7)
@@ -43,7 +46,19 @@ def visualize_latent_hierarchy(model, data_loader, device='cuda'):
     plt.xlabel("Dim 1")
     plt.ylabel("Dim 2")
     plt.legend(*scatter.legend_elements(), title="Genre")
+
+    # t-SNE on z_low
+    z_low_2d = TSNE(n_components=2, perplexity=10, random_state=42).fit_transform(z_low_all)
+
+    plt.figure(figsize=(8, 6))
+    scatter = plt.scatter(z_low_2d[:, 0], z_low_2d[:, 1], c=genres, cmap='tab10', alpha=0.7)
+    plt.title("t-SNE of z_low (style level)")
+    plt.xlabel("Dim 1")
+    plt.ylabel("Dim 2")
+    plt.legend(*scatter.legend_elements(), title="Genre")
     plt.show()
+
+    
 
 def interpolate_styles(model, pattern1, pattern2, n_steps=10, device='cuda'):
     """
