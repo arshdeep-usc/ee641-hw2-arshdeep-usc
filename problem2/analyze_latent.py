@@ -127,8 +127,8 @@ def measure_disentanglement(model, data_loader, device='cuda'):
     4. Return disentanglement metrics
     """
     model.eval()
-    genre_to_z_high = {}
-    genre_to_z_low = {}
+    genre_to_z_high = {0:[], 1:[], 2:[], 3:[], 4:[]}
+    genre_to_z_low = {0:[], 1:[], 2:[], 3:[], 4:[]}
 
     with torch.no_grad():
         for patterns, genres, _ in data_loader:
@@ -156,12 +156,11 @@ def measure_disentanglement(model, data_loader, device='cuda'):
     genre_means = np.stack([np.mean(genre_to_z_high[genre], axis=0) for genre in all_genres])
     inter_var_high = np.mean(np.var(genre_means, axis=0))
 
-    return {
-        'intra_var_high': np.mean(intra_var_high),
-        'intra_var_low': np.mean(intra_var_low),
-        'inter_var_high': inter_var_high,
-        'disentanglement_score': inter_var_high / (np.mean(intra_var_high) + 1e-8)
-    }
+    return {'intra_var_high': np.mean(intra_var_high),
+            'intra_var_low': np.mean(intra_var_low),
+            'inter_var_high': inter_var_high,
+            'disentanglement_score': inter_var_high / (np.mean(intra_var_high) + 1e-8)
+            }
 
 def controllable_generation(model, genre_labels, device='cuda'):
     """
@@ -179,7 +178,7 @@ def controllable_generation(model, genre_labels, device='cuda'):
 
     with torch.no_grad():
         # Step 1: average z_high for each genre
-        for genre, z_high_vectors in genre_labels.items():
+        for genre in genre_labels:
             genre_embeddings[genre] = torch.stack(z_high_vectors).mean(dim=0)
 
         # Step 2: generate with fixed z_high, varying z_low
