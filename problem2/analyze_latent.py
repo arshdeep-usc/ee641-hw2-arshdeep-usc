@@ -86,18 +86,35 @@ def interpolate_styles(model, pattern1, pattern2, n_steps=10, device='cuda'):
 
         for alpha in np.linspace(0, 1, n_steps):
             z_high = (1 - alpha) * mu_high1 + alpha * mu_high2
-            z_low = (1 - alpha) * mu_low1 + alpha * mu_low2
+            z_low = mu_low1 
             recon_logits = model.decode_hierarchy(z_high, z_low)
-            recon = torch.sigmoid(recon_logits)
-            styles.append(recon.cpu().squeeze(0).numpy())
+            recon1 = torch.sigmoid(recon_logits)
+            styles.append(recon1.cpu().squeeze(0).numpy())
 
         # Visualization: binary heatmaps
         fig, axs = plt.subplots(1, n_steps, figsize=(n_steps * 1.5, 2))
         for i in range(n_steps):
             axs[i].imshow(styles[i].T, aspect='auto', cmap='Greys', origin='lower')
             axs[i].axis('off')
-        plt.suptitle("Style & Variation Interpolation")
+        plt.suptitle("Style Interpolation")
         plt.show()
+
+        for alpha in np.linspace(0, 1, n_steps):
+            z_high = mu_high1
+            z_low = (1 - alpha) * mu_low1 + alpha * mu_low2
+            recon_logits = model.decode_hierarchy(z_high, z_low)
+            recon2 = torch.sigmoid(recon_logits)
+            variations.append(recon2.cpu().squeeze(0).numpy())
+
+        # Visualization: binary heatmaps
+        fig, axs = plt.subplots(1, n_steps, figsize=(n_steps * 1.5, 2))
+        for i in range(n_steps):
+            axs[i].imshow(variations[i].T, aspect='auto', cmap='Greys', origin='lower')
+            axs[i].axis('off')
+        plt.suptitle("Variation Interpolation")
+        plt.show()
+
+    return styles[-1], variations[-1]
 
 def measure_disentanglement(model, data_loader, device='cuda'):
     """
@@ -110,13 +127,13 @@ def measure_disentanglement(model, data_loader, device='cuda'):
     4. Return disentanglement metrics
     """
     model.eval()
-    genre_to_z_high = defaultdict(list)
-    genre_to_z_low = defaultdict(list)
+    genre_to_z_high = {}
+    genre_to_z_low = {}
 
     with torch.no_grad():
         for patterns, genres, _ in data_loader:
             patterns = patterns.to(device)
-            mu_low, _, mu_high, _, _ = model.encode_hierarchy(patterns)
+            mu_low, _, mu_high, _ = model.encode_hierarchy(patterns)
 
             for i in range(len(genres)):
                 genre = genres[i].item()
@@ -170,7 +187,7 @@ def controllable_generation(model, genre_labels, device='cuda'):
             z_high = z_high.unsqueeze(0).repeat(10, 1).to(device)
             z_low = torch.randn(10, model.z_low_dim).to(device)
             recon_logits = model.decode_hierarchy(z_high, z_low, temperature=0.7)
-            recon = torch.sigmoid(recon_logits)
+            #recon = torch.sigmoid(recon_logits)
             patterns_by_genre.append((genre, recon.cpu().numpy()))
 
     # Step 3: show results
