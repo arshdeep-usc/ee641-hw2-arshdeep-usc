@@ -17,7 +17,33 @@ def visualize_latent_hierarchy(model, data_loader, device='cuda'):
     3. For each z_high cluster, show z_low variations
     4. Create hierarchical visualization
     """
-    pass
+    model.eval()
+    z_high_list = []
+    z_low_list = []
+    genres = []
+
+    with torch.no_grad():
+        for patterns, genre_labels, _ in data_loader:
+            patterns = patterns.to(device)
+            mu_low, logvar_low, mu_high, logvar_high, _ = model.encode_hierarchy(patterns)
+            z_high_list.append(mu_high.cpu())
+            z_low_list.append(mu_low.cpu())
+            genres.extend(genre_labels.numpy())
+
+    z_high_all = torch.cat(z_high_list).numpy()
+    z_low_all = torch.cat(z_low_list).numpy()
+    genres = np.array(genres)
+
+    # t-SNE on z_high
+    z_high_2d = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(z_high_all)
+
+    plt.figure(figsize=(8, 6))
+    scatter = plt.scatter(z_high_2d[:, 0], z_high_2d[:, 1], c=genres, cmap='tab10', alpha=0.7)
+    plt.title("t-SNE of z_high (style level)")
+    plt.xlabel("Dim 1")
+    plt.ylabel("Dim 2")
+    plt.legend(*scatter.legend_elements(), title="Genre")
+    plt.show()
 
 def interpolate_styles(model, pattern1, pattern2, n_steps=10, device='cuda'):
     """
@@ -30,7 +56,33 @@ def interpolate_styles(model, pattern1, pattern2, n_steps=10, device='cuda'):
     4. Decode and visualize both paths
     5. Compare smooth vs abrupt transitions
     """
-    pass
+    model.eval()
+    pattern1 = pattern1.to(device).unsqueeze(0)
+    pattern2 = pattern2.to(device).unsqueeze(0)
+
+    with torch.no_grad():
+        # Encode both patterns
+        mu_low1, _, mu_high1, _ = model.encode_hierarchy(pattern1)
+        mu_low2, _, mu_high2, _ = model.encode_hierarchy(pattern2)
+
+        # Interpolation
+        styles = []
+        variations = []
+
+        for alpha in np.linspace(0, 1, n_steps):
+            z_high = (1 - alpha) * mu_high1 + alpha * mu_high2
+            z_low = (1 - alpha) * mu_low1 + alpha * mu_low2
+            recon_logits = model.decode_hierarchy(z_high, z_low)
+            recon = torch.sigmoid(recon_logits)
+            styles.append(recon.cpu().squeeze(0).numpy())
+
+        # Visualization: binary heatmaps
+        fig, axs = plt.subplots(1, n_steps, figsize=(n_steps * 1.5, 2))
+        for i in range(n_steps):
+            axs[i].imshow(styles[i].T, aspect='auto', cmap='Greys', origin='lower')
+            axs[i].axis('off')
+        plt.suptitle("Style & Variation Interpolation")
+        plt.show()
 
 def measure_disentanglement(model, data_loader, device='cuda'):
     """
@@ -42,7 +94,42 @@ def measure_disentanglement(model, data_loader, device='cuda'):
     3. Compute z_low variance for same genre
     4. Return disentanglement metrics
     """
-    pass
+    model.eval()
+    genre_to_z_high = defaultdict(list)
+    genre_to_z_low = defaultdict(list)
+
+    with torch.no_grad():
+        for patterns, genres, _ in data_loader:
+            patterns = patterns.to(device)
+            mu_low, _, mu_high, _, _ = model.encode_hierarchy(patterns)
+
+            for i in range(len(genres)):
+                genre = genres[i].item()
+                genre_to_z_high[genre].append(mu_high[i].cpu().numpy())
+                genre_to_z_low[genre].append(mu_low[i].cpu().numpy())
+
+    all_genres = list(genre_to_z_high.keys())
+
+    # Compute intra-genre variance
+    intra_var_high = []
+    intra_var_low = []
+
+    for genre in all_genres:
+        z_high = np.stack(genre_to_z_high[genre])
+        z_low = np.stack(genre_to_z_low[genre])
+        intra_var_high.append(np.mean(np.var(z_high, axis=0)))
+        intra_var_low.append(np.mean(np.var(z_low, axis=0)))
+
+    # Compute inter-genre variance (z_high only)
+    genre_means = np.stack([np.mean(genre_to_z_high[genre], axis=0) for genre in all_genres])
+    inter_var_high = np.mean(np.var(genre_means, axis=0))
+
+    return {
+        'intra_var_high': np.mean(intra_var_high),
+        'intra_var_low': np.mean(intra_var_low),
+        'inter_var_high': inter_var_high,
+        'disentanglement_score': inter_var_high / (np.mean(intra_var_high) + 1e-8)
+    }
 
 def controllable_generation(model, genre_labels, device='cuda'):
     """
@@ -54,4 +141,28 @@ def controllable_generation(model, genre_labels, device='cuda'):
     3. Control complexity via z_low sampling temperature
     4. Evaluate genre classification accuracy
     """
-    pass
+    model.eval()
+    genre_embeddings = {}
+    patterns_by_genre = []
+
+    with torch.no_grad():
+        # Step 1: average z_high for each genre
+        for genre, z_high_vectors in genre_labels.items():
+            genre_embeddings[genre] = torch.stack(z_high_vectors).mean(dim=0)
+
+        # Step 2: generate with fixed z_high, varying z_low
+        for genre, z_high in genre_embeddings.items():
+            z_high = z_high.unsqueeze(0).repeat(10, 1).to(device)
+            z_low = torch.randn(10, model.z_low_dim).to(device)
+            recon_logits = model.decode_hierarchy(z_high, z_low, temperature=0.7)
+            recon = torch.sigmoid(recon_logits)
+            patterns_by_genre.append((genre, recon.cpu().numpy()))
+
+    # Step 3: show results
+    for genre, patterns in patterns_by_genre:
+        fig, axs = plt.subplots(1, 10, figsize=(15, 2))
+        for i in range(10):
+            axs[i].imshow(patterns[i].T, aspect='auto', cmap='Greys', origin='lower')
+            axs[i].axis('off')
+        plt.suptitle(f"Generated Patterns for Genre: {genre}")
+        plt.show()
