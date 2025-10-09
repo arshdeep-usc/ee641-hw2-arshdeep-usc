@@ -46,6 +46,8 @@ def visualize_latent_hierarchy(model, data_loader, device='cuda'):
     plt.xlabel("Dim 1")
     plt.ylabel("Dim 2")
     plt.legend(*scatter.legend_elements(), title="Genre")
+    plt.savefig("results/latent_analysis/tSNE_high.png")
+
 
     # t-SNE on z_low
     z_low_2d = TSNE(n_components=2, perplexity=10, random_state=42).fit_transform(z_low_all)
@@ -56,7 +58,10 @@ def visualize_latent_hierarchy(model, data_loader, device='cuda'):
     plt.xlabel("Dim 1")
     plt.ylabel("Dim 2")
     plt.legend(*scatter.legend_elements(), title="Genre")
+    plt.savefig("results/latent_analysis/tSNE_low.png")
     plt.show()
+    
+        
 
     
 
@@ -162,7 +167,7 @@ def measure_disentanglement(model, data_loader, device='cuda'):
             'disentanglement_score': inter_var_high / (np.mean(intra_var_high) + 1e-8)
             }
 
-def controllable_generation(model, genre_labels, device='cuda'):
+def controllable_generation(model, data_loader, genre_labels, device='cuda'):
     """
     Test controllable generation using the hierarchy.
     
@@ -174,26 +179,41 @@ def controllable_generation(model, genre_labels, device='cuda'):
     """
     model.eval()
     genre_embeddings = {}
-    patterns_by_genre = []
+    patterns_by_genre = {i:[] for i in genre_labels}
+
+    # Step 0: collect z_high vectors per genre
+    genre_to_z_high = {genre: [] for genre in genre_labels}
 
     with torch.no_grad():
-        # Step 1: average z_high for each genre
-        for genre in genre_labels:
-            genre_embeddings[genre] = torch.stack(z_high_vectors).mean(dim=0)
+        for patterns, genres, _ in data_loader:
+            patterns = patterns.to(device)
+            mu_low, _, mu_high, _ = model.encode_hierarchy(patterns)
+            for i, genre_idx in enumerate(genres):
+                genre_name = genre_labels[genre_idx]  # convert tensor index to string
+                genre_to_z_high[genre_name].append(mu_high[i].cpu())
 
-        # Step 2: generate with fixed z_high, varying z_low
-        for genre, z_high in genre_embeddings.items():
-            z_high = z_high.unsqueeze(0).repeat(10, 1).to(device)
-            z_low = torch.randn(10, model.z_low_dim).to(device)
-            recon_logits = model.decode_hierarchy(z_high, z_low, temperature=0.7)
-            #recon = torch.sigmoid(recon_logits)
-            patterns_by_genre.append((genre, recon.cpu().numpy()))
+    # Step 1: average z_high for each genre
+    for genre in genre_labels:
+        z_high_vectors = genre_to_z_high[genre]
+        z_high_vectors = torch.stack(z_high_vectors)
+        genre_embeddings[genre] = z_high_vectors.mean(dim=0)
 
-    # Step 3: show results
-    for genre, patterns in patterns_by_genre:
-        fig, axs = plt.subplots(1, 10, figsize=(15, 2))
-        for i in range(10):
-            axs[i].imshow(patterns[i].T, aspect='auto', cmap='Greys', origin='lower')
-            axs[i].axis('off')
-        plt.suptitle(f"Generated Patterns for Genre: {genre}")
-        plt.show()
+    # Step 2: generate with fixed z_high, varying z_low
+    for genre, z_high in genre_embeddings.items():
+        z_high = z_high.unsqueeze(0).repeat(10, 1).to(device)
+        z_low = torch.randn(10, model.z_low_dim).to(device)
+        recon_logits = model.decode_hierarchy(z_high, z_low, temperature=0.7)
+        #patterns_by_genre.append((genre, torch.sigmoid(recon_logits).detach().cpu().numpy()))
+        patterns_by_genre[genre].append(torch.sigmoid(recon_logits).detach().cpu().numpy())
+
+    
+    # # Step 3: visualize results
+    # for genre, patterns in patterns_by_genre:
+    #     fig, axs = plt.subplots(1, 10, figsize=(15, 2))
+    #     for i in range(10):
+    #         axs[i].imshow(patterns[i].T, aspect='auto', cmap='Greys', origin='lower')
+    #         axs[i].axis('off')
+    #     plt.suptitle(f"Generated Patterns for Genre: {genre}")
+    #     plt.show()
+
+    return patterns_by_genre
